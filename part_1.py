@@ -50,19 +50,61 @@ def high_pass_filter(im: np.ndarray, kernel_size: int = 3) -> np.ndarray:
                        [-1, -1, -1]])
 
     # Apply the filter to each color channel
-    filtered_img = np.empty_like(im)
+    high_pass_image = np.zeros_like(im)
+    filtered_images = []
     for channel in range(im.shape[2]):
-        filtered_img[:, :, channel] = signal.convolve2d(im[:, :, channel], kernel, mode='same', boundary='symm')
+        filtered_image = signal.convolve2d(im[:, :, channel], kernel, mode='same', boundary='symm')
 
-    # Ensure the image is in an 8-bit range
-    filtered_img = np.clip(filtered_img, 0, 255).astype('uint8')
+        # Ensure the image is in an 8-bit range
+        filtered_image = np.clip(filtered_image, 0, 255).astype('uint8')
 
-    # plot convolution result
-    plt.imshow(filtered_img)
-    plt.title('Convolution Result')
+        filtered_images.append(filtered_image)
+        high_pass_image[:, :, channel] = filtered_image
+
+        plt.imshow(high_pass_image[:, :, channel])
+        plt.title('high passed Image')
+        plt.show()
+
+    plt.imshow(high_pass_image)
+    plt.title('high passed complete Image')
     plt.show()
 
-    return filtered_img
+    return high_pass_image
+
+
+def calc_max_suppression(image: np.ndarray, threshold: int = 250) -> object:
+    # gray_image = Image.fromarray(image).convert('L')
+    #
+    # gray_array = np.array(gray_image)
+    # Apply the maximum filter to find local maxima
+
+    max_filtered = ndimage.maximum_filter(image, size=30)
+    # Create a binary mask by comparing the filtered image to the original grayscale image
+    mask = np.equal(max_filtered, image)
+    # Apply the mask to the original image to get the final result
+    suppressed_image = Image.fromarray(np.uint8(mask) * image)
+    img2 = np.uint8(mask) * image
+    y, x = np.where(mask & (img2 >= threshold))
+    print(f'x is : {x}')
+    print(f'y is : {y}')
+    # Plotting the image
+    plt.imshow(image)
+    plt.title('Image')
+    plt.show()
+    plt.imshow(suppressed_image)
+    plt.title('convoluted Image')
+    plt.show()
+    return x.tolist(), y.tolist()
+    # return suppressed_image, mask
+
+
+def non_max_supression(images: np.ndarray,
+                       **kwargs) -> Tuple[RED_X_COORDINATES, RED_Y_COORDINATES,
+                                          GREEN_X_COORDINATES, GREEN_Y_COORDINATES]:
+    red_x, red_y = calc_max_suppression(images[:, :, 0])
+    green_x, green_y = calc_max_suppression(images[:, :, 2])
+
+    return red_x, red_y, green_x, green_y
 
 
 def find_tfl_lights(c_image: np.ndarray,
@@ -77,10 +119,14 @@ def find_tfl_lights(c_image: np.ndarray,
     ### WRITE YOUR CODE HERE ###
     ### USE HELPER FUNCTIONS ###
 
-    filtered_image = high_pass_filter(c_image)
+    filtered_images = high_pass_filter(c_image)
 
-    return [500, 700, 900], [500, 550, 600], [600, 800], [400, 300]
+    red_x, red_y, green_x, green_y = non_max_supression(filtered_images)
+    return red_x, red_y, green_x, green_y
+    # return [500, 700, 900], [500, 550, 600], [600, 800], [400, 300]
 
+
+#
 
 ### GIVEN CODE TO TEST YOUR IMPLENTATION AND PLOT THE PICTURES
 def show_image_and_gt(c_image: np.ndarray, objects: Optional[List[POLYGON_OBJECT]], fig_num: int = None):
@@ -128,6 +174,7 @@ def test_find_tfl_lights(image_path: str, image_json_path: Optional[str] = None,
 
     red_x, red_y, green_x, green_y = find_tfl_lights(c_image)
     # 'ro': This specifies the format string. 'r' represents the color red, and 'o' represents circles as markers.
+    plt.imshow(c_image)
     plt.plot(red_x, red_y, 'ro', markersize=4)
     plt.plot(green_x, green_y, 'go', markersize=4)
 
