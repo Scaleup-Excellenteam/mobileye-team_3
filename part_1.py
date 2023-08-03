@@ -9,7 +9,7 @@ from scipy import ndimage, signal
 import numpy as np
 from scipy import signal as sg
 from scipy.ndimage import maximum_filter
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageEnhance
 import matplotlib.pyplot as plt
 
 # if you wanna iterate over multiple files and json, the default source folder name is this.
@@ -19,10 +19,20 @@ DEFAULT_BASE_DIR: str = 'INSERT_YOUR_DIR_WITH_PNG_AND_JSON_HERE'
 TFL_LABEL = ['traffic light']
 
 POLYGON_OBJECT = Dict[str, Union[str, List[int]]]
+X_COORDINATES = List[int]
+Y_COORDINATES = List[int]
 RED_X_COORDINATES = List[int]
 RED_Y_COORDINATES = List[int]
 GREEN_X_COORDINATES = List[int]
 GREEN_Y_COORDINATES = List[int]
+
+high_pass_kernel = np.array([[-1, -1, -1],
+                             [-1, 8, -1],
+                             [-1, -1, -1]])
+
+low_pass_kernel = np.array([[1 / 9, 1 / 9, 1 / 9],
+                            [1 / 9, 1 / 9, 1 / 9],
+                            [1 / 9, 1 / 9, 1 / 9]])
 
 
 def plot(data, title):
@@ -33,78 +43,60 @@ def plot(data, title):
     plt.title(title)
 
 
-def high_pass_filter(im: np.ndarray, kernel_size: int = 3) -> np.ndarray:
+def filter_image(im: np.ndarray, kernel: np.ndarray) -> np.ndarray:
     """
     Apply a high pass filter on the image.
 
+    :param kernel:
     :param im: The image itself as np.uint8, shape of (H, W, 3).
-    :param kernel_size: The size of the kernel to be used in the high pass filter.
     :return: The filtered image.
     """
-    if len(im.shape) == 2:
-        # Convert grayscale image to 3-channel image
-        im = np.stack((im,) * 3, axis=-1)
 
-    kernel = np.array([[-1, -1, -1],
-                       [-1, 8, -1],
-                       [-1, -1, -1]])
-
-    # Apply the filter to each color channel
     high_pass_image = np.zeros_like(im)
-    filtered_images = []
     for channel in range(im.shape[2]):
-        filtered_image = signal.convolve2d(im[:, :, channel], kernel, mode='same', boundary='symm')
+        channel_filtered_image = signal.convolve2d(im[:, :, channel], kernel, mode='same', boundary='symm')
 
         # Ensure the image is in an 8-bit range
-        filtered_image = np.clip(filtered_image, 0, 255).astype('uint8')
-
-        filtered_images.append(filtered_image)
-        high_pass_image[:, :, channel] = filtered_image
-
-        plt.imshow(high_pass_image[:, :, channel])
-        plt.title('high passed Image')
-        plt.show()
-
-    plt.imshow(high_pass_image)
-    plt.title('high passed complete Image')
-    plt.show()
+        channel_filtered_image = np.clip(channel_filtered_image, 0, 255).astype('uint8')
+        high_pass_image[:, :, channel] = channel_filtered_image
 
     return high_pass_image
 
 
-def calc_max_suppression(image: np.ndarray, threshold: int = 250) -> object:
-    # gray_image = Image.fromarray(image).convert('L')
-    #
-    # gray_array = np.array(gray_image)
-    # Apply the maximum filter to find local maxima
+def inhance_image_without_affecting_brightess_and_constract(image: np.ndarray) -> np.ndarray:
+    enhancer = ImageEnhance.Color(Image.fromarray(image))
+    enhanced_image = enhancer.enhance(1.5)
+    enhanced_image_array = np.array(enhanced_image)
+    return enhanced_image_array
 
+X_COORDINATES = List[int]
+Y_COORDINATES = List[int]
+def cluster_points(x: List, y: List) -> Tuple[X_COORDINATES, RED_Y_COORDINATES]:
+
+
+
+
+
+    return x,y
+
+
+
+
+
+
+
+def calc_max_suppression(image: np.array, threshold: int = 120) -> object:
     max_filtered = ndimage.maximum_filter(image, size=30)
     # Create a binary mask by comparing the filtered image to the original grayscale image
     mask = np.equal(max_filtered, image)
     # Apply the mask to the original image to get the final result
-    suppressed_image = Image.fromarray(np.uint8(mask) * image)
     img2 = np.uint8(mask) * image
     y, x = np.where(mask & (img2 >= threshold))
-    print(f'x is : {x}')
-    print(f'y is : {y}')
-    # Plotting the image
-    plt.imshow(image)
-    plt.title('Image')
-    plt.show()
-    plt.imshow(suppressed_image)
-    plt.title('convoluted Image')
-    plt.show()
+
+    # cluster_points(points, 20)
+    # x, y = cluster_points(x.tolist(), y.tolist())
+
     return x.tolist(), y.tolist()
-    # return suppressed_image, mask
-
-
-def non_max_supression(images: np.ndarray,
-                       **kwargs) -> Tuple[RED_X_COORDINATES, RED_Y_COORDINATES,
-                                          GREEN_X_COORDINATES, GREEN_Y_COORDINATES]:
-    red_x, red_y = calc_max_suppression(images[:, :, 0])
-    green_x, green_y = calc_max_suppression(images[:, :, 2])
-
-    return red_x, red_y, green_x, green_y
 
 
 def find_tfl_lights(c_image: np.ndarray,
@@ -119,9 +111,12 @@ def find_tfl_lights(c_image: np.ndarray,
     ### WRITE YOUR CODE HERE ###
     ### USE HELPER FUNCTIONS ###
 
-    filtered_images = high_pass_filter(c_image)
+    c_image = inhance_image_without_affecting_brightess_and_constract(c_image)
+    c_image = filter_image(c_image, low_pass_kernel)
+    c_image = filter_image(c_image, high_pass_kernel)
+    red_x, red_y = calc_max_suppression(c_image[:, :, 0])
+    green_x, green_y = calc_max_suppression(c_image[:, :, 2])
 
-    red_x, red_y, green_x, green_y = non_max_supression(filtered_images)
     return red_x, red_y, green_x, green_y
     # return [500, 700, 900], [500, 550, 600], [600, 800], [400, 300]
 
