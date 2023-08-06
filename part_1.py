@@ -64,6 +64,9 @@ def test_find_tfl_lights(image_path: str, image_json_path: Optional[str] = None,
     first_point_form_every_red = [group[0] for group in group_red]
     first_point_form_every_green = [group[0] for group in group_green]
 
+    crop_image(image_path, first_point_form_every_red,"red")
+    crop_image(image_path, first_point_form_every_green,"green")
+
 
 
 # GIVEN CODE TO TEST YOUR IMPLEMENTATION AND PLOT THE PICTURES
@@ -191,6 +194,26 @@ def group_coordinates_by_order(coordinates, tolerance=5):
     # grouped_lists = [group for group in grouped_lists if len(group) > 2]
 
     return grouped_lists
+
+
+def crop_image(image_path: str, listpoint : list , color : str):
+    for i, point in enumerate(listpoint):
+        if i == 10:
+            break
+        x = point[0]
+        y = point[1]
+        image = Image.open(image_path)
+        size = 30
+        size_x = 10
+        if color == "red":  # rgb (255,0,0)
+            new_x = x if x < y else x - size
+            new_y = y - size if y >= size else 0
+        elif color == "green":  # rgb (0,255,0)
+            new_x = x
+            new_y = y - size if y >= size else 0
+
+        crop_img = image.crop((new_x - size_x, new_y, new_x + size - size_x, new_y + size + 10))
+        crop_img.show()
 
 
 def plot_grouped_lists(grouped_lists):
