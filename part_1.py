@@ -3,6 +3,8 @@ import json
 import argparse
 from pathlib import Path
 
+import cv2
+import csv
 from numpy import uint8
 from scipy import ndimage, signal
 
@@ -17,7 +19,7 @@ DEFAULT_BASE_DIR: str = 'INSERT_YOUR_DIR_WITH_PNG_AND_JSON_HERE'
 
 # The label we wanna look for in the polygons json file
 TFL_LABEL = ['traffic light']
-
+fieldnames = ['path', 'x', 'y', 'zoom', 'col']
 POLYGON_OBJECT = Dict[str, Union[str, List[int]]]
 X_COORDINATES = List[int]
 Y_COORDINATES = List[int]
@@ -33,6 +35,43 @@ high_pass_kernel = np.array([[-1, -1, -1],
 low_pass_kernel = np.array([[1 / 9, 1 / 9, 1 / 9],
                             [1 / 9, 1 / 9, 1 / 9],
                             [1 / 9, 1 / 9, 1 / 9]])
+
+high_pass_kernel2 = [[-1, -1, -1, -1, -1],
+                     [-1, 1, 2, 1, -1],
+                     [-1, 2, 4, 2, -1],
+                     [-1, 1, 2, 1, -1],
+                     [-1, -1, -1, -1, -1]]
+
+# high_pass_kernel3 =[[-1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
+#                     [-1,  1,  1,  1,  1,  1,  1,  1,  1, -1],
+#                     [-1,  1,  1,  1,  1,  1,  1,  1,  1, -1],
+#                     [-1,  1,  1,  1,  1,  1,  1,  1,  1,  -1],
+#                     [-1,  1,  2,  1, -1],
+#                     [-1,  1,  2,  1, -1],
+#                     [-1,  1,  2,  1, -1],
+#                     [-1, -1, -1, -1, -1]]
+
+huge_hp_kernel = np.array([[-3, -3, -3, -3, -3, -3, -3, -3, -3, -3],
+                           [-3, 1, 1, 1, 1, 1, 1, 1, 1, -3],
+                           [-3, 1, 1, 2, 2, 2, 2, 1, 1, -3],
+                           [-3, 1, 2, 2, 3, 3, 2, 2, 1, -3],
+                           [-3, 1, 2, 3, 4, 4, 3, 2, 1, -3],
+                           [-3, 1, 2, 3, 4, 4, 3, 2, 1, -3],
+                           [-3, 1, 2, 2, 3, 3, 2, 2, 1, -3],
+                           [-3, 1, 1, 2, 2, 2, 2, 1, 1, -3],
+                           [-3, 1, 1, 1, 1, 1, 1, 1, 1, -3],
+                           [-3, -3, -3, -3, -3, -3, -3, -3, -3, -3]])
+
+huge_hp_kernel2 = np.array([[0, 0, 1, 1, 1, 1, 1, 1, 0, 0],
+                            [0, 0, 1, 2, 2, 2, 2, 1, 0, 0],
+                            [1, 1, 2, 2, 3, 3, 2, 2, 1, 1],
+                            [1, 2, 2, -5, -5, -5, -5, 2, 2, 1],
+                            [1, 2, 3, -5, -9, -9, -5, 3, 2, 1],
+                            [1, 2, 3, -5, -9, -9, -5, 3, 2, 1],
+                            [1, 2, 2, -5, -5, -5, -5, 2, 2, 1],
+                            [1, 1, 2, 2, 3, 3, 2, 2, 1, 1],
+                            [0, 0, 1, 2, 2, 2, 2, 1, 0, 0],
+                            [0, 0, 1, 1, 1, 1, 1, 1, 0, 0]])
 
 
 def plot(data, title):
@@ -69,27 +108,16 @@ def inhance_image_without_affecting_brightess_and_constract(image: np.ndarray) -
     enhanced_image_array = np.array(enhanced_image)
     return enhanced_image_array
 
-X_COORDINATES = List[int]
-Y_COORDINATES = List[int]
+
 def cluster_points(x: List, y: List) -> Tuple[X_COORDINATES, RED_Y_COORDINATES]:
+    return x, y
 
 
-
-
-
-    return x,y
-
-
-
-
-
-
-
-def calc_max_suppression(image: np.array, threshold: int = 120) -> object:
+def calc_max_suppression(image: np.array, threshold: int = 200) -> object:
     max_filtered = ndimage.maximum_filter(image, size=30)
-    # Create a binary mask by comparing the filtered image to the original grayscale image
+
     mask = np.equal(max_filtered, image)
-    # Apply the mask to the original image to get the final result
+
     img2 = np.uint8(mask) * image
     y, x = np.where(mask & (img2 >= threshold))
 
@@ -99,29 +127,41 @@ def calc_max_suppression(image: np.array, threshold: int = 120) -> object:
     return x.tolist(), y.tolist()
 
 
+
+
 def find_tfl_lights(c_image: np.ndarray,
-                    **kwargs) -> Tuple[RED_X_COORDINATES, RED_Y_COORDINATES, GREEN_X_COORDINATES, GREEN_Y_COORDINATES]:
-    """
-    Detect candidates for TFL lights. Use c_image, kwargs and you imagination to implement.
+                    **kwargs) -> Tuple[List[int], List[int], List[float], List[int], List[int], List[float]]:
+    # HSV color range for green
+    lower_green = np.array([40, 80, 80])
+    upper_green = np.array([75, 255, 255])
 
-    :param c_image: The image itself as np.uint8, shape of (H, W, 3).
-    :param kwargs: Whatever config you want to pass in here.
-    :return: 4-tuple of x_red, y_red, x_green, y_green.
-    """
-    ### WRITE YOUR CODE HERE ###
-    ### USE HELPER FUNCTIONS ###
+    # Accumulators for x and y coordinates of detected green lights
+    green_x, green_y, green_zoom = [], [], []
 
-    c_image = inhance_image_without_affecting_brightess_and_constract(c_image)
-    c_image = filter_image(c_image, low_pass_kernel)
-    c_image = filter_image(c_image, high_pass_kernel)
-    red_x, red_y = calc_max_suppression(c_image[:, :, 0])
-    green_x, green_y = calc_max_suppression(c_image[:, :, 2])
+    # Create an image pyramid with scales 1.0 (original), 0.75, 0.5, 0.25
+    scales = [1.0, 0.75, 0.5, 0.25]
 
-    return red_x, red_y, green_x, green_y
-    # return [500, 700, 900], [500, 550, 600], [600, 800], [400, 300]
+    for scale in scales:
+        # Resize the image according to the scale
+        resized = cv2.resize(c_image, (0, 0), fx=scale, fy=scale)
 
+        # Convert to HSV and detect green colors
+        hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, lower_green, upper_green)
+        res = cv2.bitwise_and(resized, resized, mask=mask)
 
-#
+        # Convert back to BGR and then to grayscale
+        ccimg = cv2.cvtColor(res, cv2.COLOR_HSV2BGR)
+        cimg = cv2.cvtColor(res, cv2.COLOR_BGR2GRAY)
+
+        # Detect green lights and accumulate their coordinates
+        x, y = calc_max_suppression(cimg)
+        green_x.extend(np.array(x) / scale)  # Adjust coordinates according to the scale
+        green_y.extend(np.array(y) / scale)  # Adjust for the cropping
+        green_zoom.extend([scale] * len(x))  # Add the scale for each detected light
+
+    return [500, 700, 900], [500, 550, 600], [1, 1, 1], green_x, green_y, green_zoom
+
 
 ### GIVEN CODE TO TEST YOUR IMPLENTATION AND PLOT THE PICTURES
 def show_image_and_gt(c_image: np.ndarray, objects: Optional[List[POLYGON_OBJECT]], fig_num: int = None):
@@ -150,7 +190,19 @@ def show_image_and_gt(c_image: np.ndarray, objects: Optional[List[POLYGON_OBJECT
     plt.show()
 
 
-def test_find_tfl_lights(image_path: str, image_json_path: Optional[str] = None, fig_num=None):
+def save_to_csv(data: List[Dict[str, Union[str, int, float]]], filename: str):
+    # Get a list of all keys in the dictionaries
+    fieldnames = set().union(*[row.keys() for row in data])
+
+    with open(filename, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for row in data:
+            writer.writerow(row)
+
+
+def test_find_tfl_lights(image_path: str, image_json_path: Optional[str] = None, csvfile=None, fig_num=None):
     """
     Run the attention code.
     """
@@ -167,7 +219,17 @@ def test_find_tfl_lights(image_path: str, image_json_path: Optional[str] = None,
 
     show_image_and_gt(c_image, objects, fig_num)
 
-    red_x, red_y, green_x, green_y = find_tfl_lights(c_image)
+    red_x, red_y, red_zoom, green_x, green_y, green_zoom = find_tfl_lights(c_image)
+
+    if csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+        for x, y, zoom in zip(red_x, red_y, red_zoom):
+            writer.writerow({'path': image_path, 'x': x, 'y': y, 'zoom': zoom, 'col': 'red'})
+
+        for x, y, zoom in zip(green_x, green_y, green_zoom):
+            writer.writerow({'path': image_path, 'x': x, 'y': y, 'zoom': zoom, 'col': 'green'})
+
     # 'ro': This specifies the format string. 'r' represents the color red, and 'o' represents circles as markers.
     plt.imshow(c_image)
     plt.plot(red_x, red_y, 'ro', markersize=4)
@@ -195,12 +257,15 @@ def main(argv=None):
         # gets a list of all the files in the directory that ends with "_leftImg8bit.png".
         file_list: List[Path] = list(directory_path.glob('*_leftImg8bit.png'))
 
-        for image in file_list:
-            # Convert the Path object to a string using as_posix() method
-            image_path: str = image.as_posix()
-            path: Optional[str] = image_path.replace('_leftImg8bit.png', '_gtFine_polygons.json')
-            image_json_path: Optional[str] = path if Path(path).exists() else None
-            test_find_tfl_lights(image_path, image_json_path)
+        with open("attention_results.csv", 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for image in file_list:
+                # Convert the Path object to a string using as_posix() method
+                image_path: str = image.as_posix()
+                path: Optional[str] = image_path.replace('_leftImg8bit.png', '_gtFine_polygons.json')
+                image_json_path: Optional[str] = path if Path(path).exists() else None
+                test_find_tfl_lights(image_path, image_json_path, csvfile)
 
     if args.image and args.json:
         test_find_tfl_lights(args.image, args.json)

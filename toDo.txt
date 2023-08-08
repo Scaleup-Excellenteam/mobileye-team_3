@@ -1,0 +1,14 @@
+Ola:
+
+Damian:
+
+Elad:
+
+Yaakov:
+
+
+Where are we now?
+Attention phase:
+
+    -We identify fine traffic lights with fine results. Very small tfl sometimes arent detected
+
