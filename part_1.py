@@ -48,24 +48,24 @@ def test_find_tfl_lights(image_path: str, image_json_path: Optional[str] = None,
 
     show_image_and_gt(c_image, objects, fig_num)
 
-    red_x, red_y, green_x, green_y = find_tfl_lights(c_image)
-    # 'ro': This specifies the format string. 'r' represents the color red, and 'o' represents circles as markers.
-    plt.imshow(c_image)
-
-    plt.plot(red_x, red_y, 'ro', markersize=4)
-    plt.plot(green_x, green_y, 'go', markersize=4)
-
-    red_coordinates = list(zip(red_x, red_y))
-    green_coordinates = list(zip(green_x, green_y))
-
-    group_red = group_coordinates_by_order(red_coordinates)
-    group_green = group_coordinates_by_order(green_coordinates)
-
-    first_point_form_every_red = [group[0] for group in group_red]
-    first_point_form_every_green = [group[0] for group in group_green]
-
-    crop_image(image_path, first_point_form_every_red,"red")
-    crop_image(image_path, first_point_form_every_green,"green")
+    # red_x, red_y, green_x, green_y = find_tfl_lights(c_image)
+    # # 'ro': This specifies the format string. 'r' represents the color red, and 'o' represents circles as markers.
+    # plt.imshow(c_image)
+    #
+    # plt.plot(red_x, red_y, 'ro', markersize=4)
+    # plt.plot(green_x, green_y, 'go', markersize=4)
+    #
+    # red_coordinates = list(zip(red_x, red_y))
+    # green_coordinates = list(zip(green_x, green_y))
+    #
+    # group_red = group_coordinates_by_order(red_coordinates)
+    # group_green = group_coordinates_by_order(green_coordinates)
+    #
+    # first_point_form_every_red = [group[0] for group in group_red]
+    # first_point_form_every_green = [group[0] for group in group_green]
+    #
+    # crop_image(image_path, first_point_form_every_red,"red")
+    # crop_image(image_path, first_point_form_every_green,"green")
 
 
 
@@ -112,7 +112,7 @@ def find_tfl_lights(c_image: np.ndarray,
     c_image = filter_image(c_image, low_pass_kernel)
     c_image = filter_image(c_image, high_pass_kernel)
     red_x, red_y = calc_max_suppression(c_image[:, :, 0])
-    green_x, green_y = calc_max_suppression(c_image[:, :, 2])
+    green_x, green_y = calc_max_suppression(c_image[:, :, 1])
 
     return red_x, red_y, green_x, green_y
 
@@ -140,7 +140,6 @@ def filter_image(im: np.ndarray, kernel: np.ndarray) -> np.ndarray:
         # Ensure the image is in an 8-bit range
         channel_filtered_image = np.clip(channel_filtered_image, 0, 255).astype('uint8')
         high_pass_image[:, :, channel] = channel_filtered_image
-        print("hi")
 
     return high_pass_image
 
@@ -197,9 +196,11 @@ def group_coordinates_by_order(coordinates, tolerance=5):
 
 
 def crop_image(image_path: str, listpoint : list , color : str):
+    cropped_images = []
+    polygons_cropped = []
     for i, point in enumerate(listpoint):
-        if i == 10:
-            break
+        # if i == 10:
+        #     break
         x = point[0]
         y = point[1]
         image = Image.open(image_path)
@@ -213,7 +214,14 @@ def crop_image(image_path: str, listpoint : list , color : str):
             new_y = y - size if y >= size else 0
 
         crop_img = image.crop((new_x - size_x, new_y, new_x + size - size_x, new_y + size + 10))
-        crop_img.show()
+
+        # plt.imshow(crop_img)
+        cropped_images.append(crop_img)
+
+    print(len(cropped_images))
+    for image in cropped_images:
+        plt.imshow(image)
+        plt.show()
 
 
 def plot_grouped_lists(grouped_lists):
