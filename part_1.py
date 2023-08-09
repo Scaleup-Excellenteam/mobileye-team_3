@@ -1,4 +1,5 @@
 import csv
+import os
 from collections import deque
 from typing import List, Optional, Union, Dict, Tuple, Any
 import json
@@ -11,8 +12,11 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 from skimage.feature import peak_local_max
+import crops
+import pandas as pd
 
-DEFAULT_BASE_DIR: str = 'INSERT_YOUR_DIR_WITH_PNG_AND_JSON_HERE'
+DEFAULT_BASE_DIR: str = 'leftImg8bit_trainvaltest/leftImg8bit/train'
+CVS_PATH_FILE: str = "data/attention_results/attention_results.csv"
 
 # The label we wanna look for in the polygons json file
 TFL_LABEL = ['traffic light']
@@ -195,7 +199,7 @@ def test_find_tfl_lights(image_path: str, image_json_path: Optional[str] = None,
         objects: List[POLYGON_OBJECT] = [image_object for image_object in image_json['objects']
                                          if image_object['label'] in TFL_LABEL]
 
-    show_image_and_gt(c_image, objects, fig_num)
+    # show_image_and_gt(c_image, objects, fig_num)
 
     red_x, red_y, red_zoom, green_x, green_y, green_zoom = find_tfl_lights(c_image)
 
@@ -225,9 +229,9 @@ def test_find_tfl_lights(image_path: str, image_json_path: Optional[str] = None,
         for x, y, zoom in zip(green_x, green_y, green_zoom):
             writer.writerow({'path': image_path, 'x': x, 'y': y, 'zoom': zoom, 'col': 'green'})
 
-    plt.imshow(c_image)
-    plt.plot(red_x, red_y, 'ro', markersize=4)
-    plt.plot(green_x, green_y, 'go', markersize=4)
+    # plt.imshow(c_image)
+    # plt.plot(red_x, red_y, 'ro', markersize=4)
+    # plt.plot(green_x, green_y, 'go', markersize=4)
 
 
 # GIVEN CODE TO TEST YOUR IMPLEMENTATION AND PLOT THE PICTURES
@@ -247,14 +251,14 @@ def show_image_and_gt(c_image: np.ndarray, objects: Optional[List[POLYGON_OBJECT
             # gets the x coordinates (first column -> 0) anf y coordinates (second column -> 1)
             x_coordinates, y_coordinates = polygon_array[:, 0], polygon_array[:, 1]
             color = 'r'
-            plt.plot(x_coordinates, y_coordinates, color, label=image_object['label'])
+            # plt.plot(x_coordinates, y_coordinates, color, label=image_object['label'])
             labels.add(image_object['label'])
         if 1 < len(labels):
             # The legend provides a visual representation of the labels associated with the plotted objects.
             # It helps in distinguishing different objects in the plot based on their labels.
             plt.legend()
 
-    plt.show()
+    # plt.show()
 
 
 # def find_tfl_lights(c_image: np.ndarray,
@@ -321,43 +325,6 @@ def group_coordinates_by_order(coordinates, tolerance=30):
     return grouped_lists
 
 
-# def crop_image(image_path: str, listpoint: list, color: str):
-#     cropped_images = []
-#     polygons_cropped = []
-#     for i, point in enumerate(listpoint):
-#         # if i == 10:
-#         #     break
-#         x = point[0]
-#         y = point[1]
-#         image = Image.open(image_path)
-#         size = 30
-#         size_x = 10
-#         if color == "red":  # rgb (255,0,0)
-#             new_x = x if x < y else x - size
-#             new_y = y - size if y >= size else 0
-#         elif color == "green":  # rgb (0,255,0)
-#             new_x = x
-#             new_y = y - size if y >= size else 0
-#
-#         crop_img = image.crop((new_x - size_x, new_y, new_x + size - size_x, new_y + size + 10))
-#
-#         # plt.imshow(crop_img)
-#         cropped_images.append(crop_img)
-#
-#     print(len(cropped_images))
-#     for image in cropped_images:
-#         plt.imshow(image)
-#         plt.show()
-
-
-def plot_grouped_lists(grouped_lists):
-    for i, group in enumerate(grouped_lists):
-        # take the first point in the grouped lists
-        first_point = group[0]
-        print(first_point)
-        plt.plot(first_point, 'bo', markersize=4)
-
-
 def main(argv=None):
     """
     It's nice to have a standalone tester for the algorithm.
@@ -373,13 +340,18 @@ def main(argv=None):
     parser.add_argument('-d', '--dir', type=str, help='Directory to scan images in')
     args = parser.parse_args(argv)
 
-    # If you entered a custom dir to run from or the default dir exist in your project then:
+    # If you entered a custom dir to run from or the default dir exists in your project, then:
     directory_path: Path = Path(args.dir or DEFAULT_BASE_DIR)
     if directory_path.exists():
-        # gets a list of all the files in the directory that ends with "_leftImg8bit.png".
-        file_list: List[Path] = list(directory_path.glob('*_leftImg8bit.png'))
+        file_list: List[Path] = []
+        for subdirectory in directory_path.iterdir():
+            if subdirectory.is_dir():
+                # Get a list of image files from each subdirectory
+                image_files = subdirectory.glob('*_leftImg8bit.png')
+                file_list.extend(image_files)
 
-        with open("attention_results.csv", 'w', newline='') as csvfile:
+
+        with open(CVS_PATH_FILE, 'w', newline='') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             for image in file_list:
@@ -393,6 +365,11 @@ def main(argv=None):
         test_find_tfl_lights(args.image, args.json)
     elif args.image:
         test_find_tfl_lights(args.image)
+
+    # open the attention results csv file with pandas
+    df = pd.read_csv(CVS_PATH_FILE)
+    crops.create_crops(df)
+
     plt.show(block=True)
 
 

@@ -12,7 +12,7 @@ SEQ: str = 'seq'  # The image seq number -> for tracing back the original image
 IS_TRUE: str = 'is_true'  # Is it a traffic light or not.
 IGNOR: str = 'is_ignore'  # If it's an unusual crop (like two tfl's or only half etc.) that you can just ignor it and
 # investigate the reason after
-CROP_PATH: str = 'path'
+CROP_PATH: str = 'data/crops/'
 X0: str = 'x0'  # The bigger x value (the right corner)
 X1: str = 'x1'  # The smaller x value (the left corner)
 Y0: str = 'y0'  # The smaller y value (the lower corner)
@@ -47,15 +47,16 @@ def make_crop(df_x, df_y, row_zoom, row_color):
     """
     if pd.isna(df_x) or pd.isna(df_y) or pd.isna(row_zoom) or pd.isna(row_color):
         return -1, -1, -1, -1
-
     width = 10 * row_zoom
     height = 15 * row_zoom
-    if row_color == 'r':
+    if row_color == 'red':
         new_x = df_x - 5
         new_y = df_y - height + 5 if df_y >= height else 0
-    elif row_color == 'g':
+    elif row_color == 'green':
         new_x = df_x - 5
         new_y = df_y - height if df_y >= height else 0
+    else:
+        return -1, -1, -1, -1
 
     return new_x - width, new_x + 2 * width + 10, new_y - 10, new_y + height
 
@@ -72,7 +73,7 @@ def check_crop(polygon: List, image_path: str):
     image_path = image_path.split('_')[0] + '_' + image_path.split('_')[1] + '_' + \
            image_path.split('_')[2] + '_gtFine_polygons.json'
 
-    image_path = os.path.join('images_set', image_path)
+    image_path = os.path.join('data/attention_results', image_path)
     if not os.path.exists(image_path):
         return False, False
 
@@ -147,8 +148,17 @@ def create_crops(df: pd.DataFrame) -> pd.DataFrame:
     # A dict containing the row you want to insert into the result DataFrame.
     result_template: Dict[Any] = {SEQ: '', IS_TRUE: '', IGNOR: '', CROP_PATH: '', X0: '', X1: '', Y0: '', Y1: '',
                                   COL: ''}
+    seq = 0
+    image_temp_seq = df.iloc[0][PATH].split('_')[2]
+
     for index, row in df.iterrows():
-        # result_template[SEQ] = row[SEQ_IMAG]
+        image_seq = row[PATH].split('_')[2]
+        if image_seq != image_temp_seq:
+            seq = 0
+            image_temp_seq = image_seq
+        result_template[SEQ] = seq
+        seq += 1
+
         result_template[COL] = row[COL]
 
         # example code:
@@ -158,14 +168,16 @@ def create_crops(df: pd.DataFrame) -> pd.DataFrame:
         if x0 == -1 or x1 == -1 or y0 == -1 or y1 == -1:
             continue
         result_template[X0], result_template[X1], result_template[Y0], result_template[Y1] = x0, x1, y0, y1
-
         # change the crop_path to the path you want to save the crop in.
-        crop_path: str = '/data/crops/my_crop_unique_name.probably_containing_the original_image_name+somthing_unique'
-        # crop.save(CROP_DIR / crop_path)
-        result_template[CROP_PATH] = crop_path
 
-        crop = [x0, x1, y0, y1]
-        result_template[IS_TRUE], result_template[IGNOR] = check_crop(crop, row[PATH])
+        filename = row[PATH].split('.png')[0]
+        new_crop_filename = f"{filename}_{seq}.png"
+        result_template[CROP_PATH] = new_crop_filename
+
+        # crop.save(CROP_DIR / new_crop_filename)
+
+        crop_polygon = [x0, x1, y0, y1]
+        result_template[IS_TRUE], result_template[IGNOR] = check_crop(crop_polygon, row[PATH])
         # ******* TO HERE *******
 
         # added to current row to the result DataFrame that will serve you as the input to part 2 B).
@@ -176,9 +188,9 @@ def create_crops(df: pd.DataFrame) -> pd.DataFrame:
     return result_df
 
 
-# if __name__ == '__main__':
-#     df = pd.read_csv('attention_results/attention_results.csv')
-#     create_crops(df)
+if __name__ == '__main__':
+    df = pd.read_csv('data/attention_results/attention_results.csv')
+    create_crops(df)
 
     # # read csv file
     # crops_df = pd.read_csv('attention_results/crop_results.csv')
