@@ -6,6 +6,7 @@ import pandas as pd
 from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
 import matplotlib.pyplot as plt
+from PIL import Image
 import math
 
 SEQ: str = 'seq'  # The image seq number -> for tracing back the original image
@@ -77,7 +78,6 @@ def check_crop(polygon: List, image_path: str):
     if not os.path.exists(image_path):
         return False, False
 
-    print("check crop")
     traffic_light_polygons_json = get_traffic_light_polygons_from_json(image_path)
 
     traffic_light_contain = False
@@ -113,6 +113,27 @@ def get_traffic_light_polygons_from_json(image_path):
                 polygon = obj['polygon']
                 traffic_sign_polygons.append(polygon)
     return traffic_sign_polygons
+
+def get_crop_filename(image_path: str, seq: int) -> str:
+    """
+    *** No need to touch this. ***
+    Returns the crop filename according to the image path and the sequence number.
+    """
+    filename = image_path.split('/')[-1]
+    filename = filename.split('.png')[0]
+    return f"{filename}_{seq}.png"
+
+def crop_image(path: str, polygon: List) -> Image:
+    """
+    Crops the image according to the coordinates and saves it in the
+     relevant folder under the relevant name.
+    """
+    # Open the original image using PIL
+    original_image = Image.open(path)
+
+    # Crop the image using the calculated coordinates
+    cropped_image = original_image.crop((polygon[0], polygon[2], polygon[1], polygon[3]))
+    return cropped_image
 
 
 def save_for_part_2(crops_df: pd.DataFrame):
@@ -168,13 +189,14 @@ def create_crops(df: pd.DataFrame) -> pd.DataFrame:
         if x0 == -1 or x1 == -1 or y0 == -1 or y1 == -1:
             continue
         result_template[X0], result_template[X1], result_template[Y0], result_template[Y1] = x0, x1, y0, y1
+
         # change the crop_path to the path you want to save the crop in.
+        result_template[CROP_PATH] = get_crop_filename(row[PATH], seq)
 
-        filename = row[PATH].split('.png')[0]
-        new_crop_filename = f"{filename}_{seq}.png"
-        result_template[CROP_PATH] = new_crop_filename
+        # Crop the image using the calculated coordinates
+        cropped_image = crop_image(row[PATH], [x0, x1, y0, y1])
 
-        # crop.save(CROP_DIR / new_crop_filename)
+        cropped_image.save(CROP_DIR / result_template[CROP_PATH])
 
         crop_polygon = [x0, x1, y0, y1]
         result_template[IS_TRUE], result_template[IGNOR] = check_crop(crop_polygon, row[PATH])
@@ -191,15 +213,3 @@ def create_crops(df: pd.DataFrame) -> pd.DataFrame:
 if __name__ == '__main__':
     df = pd.read_csv('data/attention_results/attention_results.csv')
     create_crops(df)
-
-    # # read csv file
-    # crops_df = pd.read_csv('attention_results/crop_results.csv')
-    # for i, row in enumerate(crops_df.iterrows()):
-    #     if row[1]['path'].split('_')[0] != 'aachen':
-    #         continue
-    #     polygon = [row[1]['x0'], row[1]['x1'], row[1]['y0'], row[1]['y1']]
-    #     image_path = row[1]['path'].split('_')[0] + '_' + row[1]['path'].split('_')[1] + '_' + \
-    #                  row[1]['path'].split('_')[2] + '_gtFine_polygons.json'
-    #     color = row[1]['col']
-    #     # print(polygon, image_path, color)
-    #     check_crop(polygon, image_path)
