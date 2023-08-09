@@ -1,16 +1,17 @@
-import cv2
 import csv
 from collections import deque
-from typing import List, Optional, Union, Dict, Tuple
+from typing import List, Optional, Union, Dict, Tuple, Any
 import json
 import argparse
 from pathlib import Path
-from scipy import ndimage, signal
-import numpy as np
-from PIL import Image, ImageEnhance
-import matplotlib.pyplot as plt
 
-# if you wanna iterate over multiple files and json, the default source folder name is this.
+import cv2
+from scipy import ndimage
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
+from skimage.feature import peak_local_max
+
 DEFAULT_BASE_DIR: str = 'INSERT_YOUR_DIR_WITH_PNG_AND_JSON_HERE'
 
 # The label we wanna look for in the polygons json file
@@ -23,6 +24,17 @@ RED_X_COORDINATES = List[int]
 RED_Y_COORDINATES = List[int]
 GREEN_X_COORDINATES = List[int]
 GREEN_Y_COORDINATES = List[int]
+# HSV color range for green
+lower_green = np.array([40, 80, 80])
+upper_green = np.array([75, 255, 255])
+
+# HSV color range for red
+lower_red = np.array([0, 50, 50])
+upper_red = np.array([10, 255, 255])
+
+# High-red: Hue values from around 170 to 180
+lower_red2 = np.array([170, lower_red[1], lower_red[2]])
+upper_red2 = np.array([180, upper_red[1], upper_red[2]])
 
 high_pass_kernel = np.array([[-1, -1, -1],
                              [-1, 8, -1],
@@ -38,36 +50,134 @@ high_pass_kernel2 = [[-1, -1, -1, -1, -1],
                      [-1, 1, 2, 1, -1],
                      [-1, -1, -1, -1, -1]]
 
-# high_pass_kernel3 =[[-1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
-#                     [-1,  1,  1,  1,  1,  1,  1,  1,  1, -1],
-#                     [-1,  1,  1,  1,  1,  1,  1,  1,  1, -1],
-#                     [-1,  1,  1,  1,  1,  1,  1,  1,  1,  -1],
-#                     [-1,  1,  2,  1, -1],
-#                     [-1,  1,  2,  1, -1],
-#                     [-1,  1,  2,  1, -1],
-#                     [-1, -1, -1, -1, -1]]
+GREEN_IMAGE_KERNEL = 'kernels/green_kernel.jpg'
+RED_IMAGE_KERNEL = 'kernels/red_kernel.jpg'
 
-huge_hp_kernel = np.array([[-3, -3, -3, -3, -3, -3, -3, -3, -3, -3],
-                           [-3, 1, 1, 1, 1, 1, 1, 1, 1, -3],
-                           [-3, 1, 1, 2, 2, 2, 2, 1, 1, -3],
-                           [-3, 1, 2, 2, 3, 3, 2, 2, 1, -3],
-                           [-3, 1, 2, 3, 4, 4, 3, 2, 1, -3],
-                           [-3, 1, 2, 3, 4, 4, 3, 2, 1, -3],
-                           [-3, 1, 2, 2, 3, 3, 2, 2, 1, -3],
-                           [-3, 1, 1, 2, 2, 2, 2, 1, 1, -3],
-                           [-3, 1, 1, 1, 1, 1, 1, 1, 1, -3],
-                           [-3, -3, -3, -3, -3, -3, -3, -3, -3, -3]])
+THRESHOLD = 126
 
-huge_hp_kernel2 = np.array([[0, 0, 1, 1, 1, 1, 1, 1, 0, 0],
-                            [0, 0, 1, 2, 2, 2, 2, 1, 0, 0],
-                            [1, 1, 2, 2, 3, 3, 2, 2, 1, 1],
-                            [1, 2, 2, -5, -5, -5, -5, 2, 2, 1],
-                            [1, 2, 3, -5, -9, -9, -5, 3, 2, 1],
-                            [1, 2, 3, -5, -9, -9, -5, 3, 2, 1],
-                            [1, 2, 2, -5, -5, -5, -5, 2, 2, 1],
-                            [1, 1, 2, 2, 3, 3, 2, 2, 1, 1],
-                            [0, 0, 1, 2, 2, 2, 2, 1, 0, 0],
-                            [0, 0, 1, 1, 1, 1, 1, 1, 0, 0]])
+RED = 0
+GREEN = 1
+SCALES = [1.0, 0.75, 0.5, 0.25, 0.125, 0.0625]
+
+
+def extract_color_from_image(image: np.array, color: int) -> np.array:
+    return image[:, :, color].copy()
+
+
+def extract_kernel(kernel_image_path: str, color: int) -> np.array:
+    kernel_arr = np.array(Image.open(kernel_image_path))
+    kernel_arr = extract_color_from_image(kernel_arr, color)
+
+    # convert to float and normalize
+    kernel_arr = kernel_arr.astype(float)
+    kernel_arr -= np.mean(kernel_arr)  # normalize
+    # print(kernel_arr)
+    return kernel_arr
+
+
+def find_tfl_lights(c_image: np.ndarray,
+                    **kwargs) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any], list[Any]]:
+    # Accumulators for x and y coordinates of detected green lights
+    green_x, green_y = [], []
+    red_x, red_y = [], []
+    red_zoom, green_zoom = [], []
+    c_image = cv2.cvtColor(c_image, cv2.COLOR_BGR2RGB)
+    for scale in SCALES:
+        # Resize the image according to the scale
+        resized = cv2.resize(c_image, (0, 0), fx=scale, fy=scale)
+        # Convert to HSV
+        hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+
+        # detecting green lights
+        mask_green = cv2.inRange(hsv, lower_green, upper_green)
+        res = cv2.bitwise_and(resized, resized, mask=mask_green)
+        # detecting red lights
+        mask_red = cv2.inRange(hsv, lower_red, upper_red)
+        mask_red2 = cv2.inRange(hsv, lower_red2, upper_red2)
+        mask_red = mask_red + mask_red2
+        res2 = cv2.bitwise_and(resized, resized, mask=mask_red)
+
+        # Convert back to BGR and then to grayscale
+        cimg = cv2.cvtColor(res, cv2.COLOR_BGR2GRAY)
+        cimg2 = cv2.cvtColor(res2, cv2.COLOR_BGR2GRAY)
+
+        # Detect green lights and accumulate their coordinates
+        x, y = calc_max_suppression(cimg)
+        green_x.extend(np.array(x) / scale)  # Adjust coordinates according to the scale
+        green_y.extend(np.array(y) / scale)
+        green_zoom.extend(np.array(scale * np.ones(len(x))))
+
+        # Detect red lights and accumulate their coordinates
+        x, y = calc_max_suppression(cimg2)
+        red_x.extend(np.array(x) / scale)  # Adjust coordinates according to the scale
+        red_y.extend(np.array(y) / scale)
+        red_zoom.extend(np.array(scale * np.ones(len(x))))
+
+    return red_x, red_y, red_zoom, green_x, green_y, green_zoom
+
+
+def calc_max_suppression(image: np.array, threshold: int = 200) -> object:
+    max_filtered = ndimage.maximum_filter(image, size=30)
+
+    mask = np.equal(max_filtered, image)
+
+    img2 = np.uint8(mask) * image
+    y, x = np.where(mask & (img2 >= threshold))
+
+    # cluster_points(points, 20)
+    # x, y = cluster_points(x.tolist(), y.tolist())
+
+    return x.tolist(), y.tolist()
+
+
+def filter_color(color: int, image: np.ndarray, local_max_list: list) -> list:
+    filter_color_list = []
+
+    for local_max in local_max_list:
+        r, g, b = image[local_max[0], local_max[1]]  # get the RGB values channels
+        if (color == RED and r > 127 and g < r and b < r) or \
+                (color == GREEN and g > 166 and r < g and b < g):
+            filter_color_list.append([local_max[0], local_max[1]])
+
+    return filter_color_list
+
+
+def get_local_list(image: np.ndarray, locale_max_list) -> List[Tuple[int, int]]:
+    """ filter the local max that are above the threshold
+    :param image: np.ndarray of the image
+    :param locale_max_list: list of the local max
+    :return: list of the local max that are above the threshold
+    """
+    return list(filter(lambda x: (image[x[0], x[1]] > THRESHOLD), locale_max_list))
+
+
+def get_local_max_list(image: np.ndarray) -> List[Tuple[int, int]]:
+    """ get the local maximum of the image
+    :param image: np.ndarray of the image
+    :return: list of the local max
+    """
+    local_max_list = peak_local_max(image, min_distance=80)
+    local_max_list = get_local_list(image, local_max_list)
+    return local_max_list
+
+
+def filter_by_color(c_image_arr: np.array, c_image: np.ndarray, kernel_image_path: str, color: int):
+    """ filter the image by color
+    :param c_image_arr: np.array of the image (data)
+    :param c_image: np.ndarray of the image
+    :param kernel_image_path: path to the kernel image
+    :param color: the color to filter by
+    :return: the normalized image and the filtered color
+    """
+    image_after_extracting_color = extract_color_from_image(c_image_arr, color)
+    kernel_image = extract_kernel(kernel_image_path, color)
+    print(image_after_extracting_color)
+    print("kernel_image, ", kernel_image)
+    image = ndimage.convolve(image_after_extracting_color.astype(float), kernel_image[::-1, ::-1])
+    normalized_image = image / np.linalg.norm(image)
+    local_max_list = get_local_max_list(image)
+    filtered_color = filter_color(color, c_image, local_max_list)
+    return normalized_image, filtered_color
 
 
 def test_find_tfl_lights(image_path: str, image_json_path: Optional[str] = None, csvfile=None, fig_num=None):
@@ -89,24 +199,22 @@ def test_find_tfl_lights(image_path: str, image_json_path: Optional[str] = None,
 
     red_x, red_y, red_zoom, green_x, green_y, green_zoom = find_tfl_lights(c_image)
 
-    # red_x, red_y, green_x, green_y = find_tfl_lights(c_image)
-    # # 'ro': This specifies the format string. 'r' represents the color red, and 'o' represents circles as markers.
-    # plt.imshow(c_image)
-    #
-    # plt.plot(red_x, red_y, 'ro', markersize=4)
-    # plt.plot(green_x, green_y, 'go', markersize=4)
-    #
-    # red_coordinates = list(zip(red_x, red_y))
-    # green_coordinates = list(zip(green_x, green_y))
-    #
-    # group_red = group_coordinates_by_order(red_coordinates)
-    # group_green = group_coordinates_by_order(green_coordinates)
-    #
-    # first_point_form_every_red = [group[0] for group in group_red]
-    # first_point_form_every_green = [group[0] for group in group_green]
-    #
-    # crop_image(image_path, first_point_form_every_red,"red")
-    # crop_image(image_path, first_point_form_every_green,"green")
+    red_coordinates = list(zip(red_x, red_y))
+    green_coordinates = list(zip(green_x, green_y))
+
+    group_red = group_coordinates_by_order(red_coordinates)
+    group_green = group_coordinates_by_order(green_coordinates)
+
+    first_point_form_every_red = [group[0] for group in group_red]
+    first_point_form_every_green = [group[0] for group in group_green]
+
+    red_x = [point[0] for point in first_point_form_every_red]
+    red_y = [point[1] for point in first_point_form_every_red]
+    green_x = [point[0] for point in first_point_form_every_green]
+    green_y = [point[1] for point in first_point_form_every_green]
+
+    red_zoom = np.array(np.ones(len(first_point_form_every_red)))
+    green_zoom = np.array(np.ones(len(first_point_form_every_green)))
 
     if csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -117,7 +225,6 @@ def test_find_tfl_lights(image_path: str, image_json_path: Optional[str] = None,
         for x, y, zoom in zip(green_x, green_y, green_zoom):
             writer.writerow({'path': image_path, 'x': x, 'y': y, 'zoom': zoom, 'col': 'green'})
 
-    # 'ro': This specifies the format string. 'r' represents the color red, and 'o' represents circles as markers.
     plt.imshow(c_image)
     plt.plot(red_x, red_y, 'ro', markersize=4)
     plt.plot(green_x, green_y, 'go', markersize=4)
@@ -150,86 +257,34 @@ def show_image_and_gt(c_image: np.ndarray, objects: Optional[List[POLYGON_OBJECT
     plt.show()
 
 
-def find_tfl_lights(c_image: np.ndarray,
-                    **kwargs) -> Tuple[List[int], List[int], List[float], List[int], List[int], List[float]]:
-    # HSV color range for green
-    lower_green = np.array([40, 80, 80])
-    upper_green = np.array([75, 255, 255])
-
-    # Accumulators for x and y coordinates of detected green lights
-    green_x, green_y, green_zoom = [], [], []
-
-    # Create an image pyramid with scales 1.0 (original), 0.75, 0.5, 0.25
-    scales = [1.0, 0.75, 0.5, 0.25]
-
-    for scale in scales:
-        # Resize the image according to the scale
-        resized = cv2.resize(c_image, (0, 0), fx=scale, fy=scale)
-
-        # Convert to HSV and detect green colors
-        hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, lower_green, upper_green)
-        res = cv2.bitwise_and(resized, resized, mask=mask)
-
-        # Convert back to BGR and then to grayscale
-        ccimg = cv2.cvtColor(res, cv2.COLOR_HSV2BGR)
-        cimg = cv2.cvtColor(res, cv2.COLOR_BGR2GRAY)
-
-        # Detect green lights and accumulate their coordinates
-        x, y = calc_max_suppression(cimg)
-        green_x.extend(np.array(x) / scale)  # Adjust coordinates according to the scale
-        green_y.extend(np.array(y) / scale)  # Adjust for the cropping
-        green_zoom.extend([scale] * len(x))  # Add the scale for each detected light
-
-    return [500, 700, 900], [500, 550, 600], [1, 1, 1], green_x, green_y, green_zoom
+# def find_tfl_lights(c_image: np.ndarray,
+#                     **kwargs) -> Tuple[List[int], List[int], List[float], List[int], List[int], List[float]]:
+#     # HSV color range for green
+#     lower_green = np.array([40, 80, 80])
+#     upper_green = np.array([75, 255, 255])
+#
+#     # Accumulators for x and y coordinates of detected green lights
+#     green_x, green_y, green_zoom = [], [], []
+#
+#     # Create an image pyramid with scales 1.0 (original), 0.75, 0.5, 0.25
+#     scales = [1.0, 0.75, 0.5, 0.25]
 
 
-def enhance_image_without_affecting_brightness_and_contrast(image: np.ndarray) -> np.ndarray:
-    enhancer = ImageEnhance.Color(Image.fromarray(image))
-    enhanced_image = enhancer.enhance(1.5)
-    enhanced_image_array = np.array(enhanced_image)
-    return enhanced_image_array
+# def calc_max_suppression(image: np.array, threshold: int = 200) -> object:
+#     max_filtered = ndimage.maximum_filter(image, size=30)
+#
+#     mask = np.equal(max_filtered, image)
+#
+#     img2 = np.uint8(mask) * image
+#     y, x = np.where(mask & (img2 >= threshold))
+#
+#     # cluster_points(points, 20)
+#     # x, y = cluster_points(x.tolist(), y.tolist())
+#
+#     return x.tolist(), y.tolist()
 
 
-def filter_image(im: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-    """
-    Apply a high pass filter on the image.
-
-    :param kernel:
-    :param im: The image itself as np.uint8, shape of (H, W, 3).
-    :return: The filtered image.
-    """
-
-    high_pass_image = np.zeros_like(im)
-    for channel in range(im.shape[2]):
-        channel_filtered_image = signal.convolve2d(im[:, :, channel], kernel, mode='same', boundary='symm')
-
-        # Ensure the image is in an 8-bit range
-        channel_filtered_image = np.clip(channel_filtered_image, 0, 255).astype('uint8')
-        high_pass_image[:, :, channel] = channel_filtered_image
-
-    return high_pass_image
-
-
-def cluster_points(x: List, y: List) -> Tuple[X_COORDINATES, RED_Y_COORDINATES]:
-    return x, y
-
-
-def calc_max_suppression(image: np.array, threshold: int = 200) -> object:
-    max_filtered = ndimage.maximum_filter(image, size=30)
-
-    mask = np.equal(max_filtered, image)
-
-    img2 = np.uint8(mask) * image
-    y, x = np.where(mask & (img2 >= threshold))
-
-    # cluster_points(points, 20)
-    # x, y = cluster_points(x.tolist(), y.tolist())
-
-    return x.tolist(), y.tolist()
-
-
-def group_coordinates_by_order(coordinates, tolerance=5):
+def group_coordinates_by_order(coordinates, tolerance=30):
     # Create a queue to hold the coordinates to be processed
     queue = deque(coordinates)
 
@@ -266,33 +321,33 @@ def group_coordinates_by_order(coordinates, tolerance=5):
     return grouped_lists
 
 
-def crop_image(image_path: str, listpoint: list, color: str):
-    cropped_images = []
-    polygons_cropped = []
-    for i, point in enumerate(listpoint):
-        # if i == 10:
-        #     break
-        x = point[0]
-        y = point[1]
-        image = Image.open(image_path)
-        size = 30
-        size_x = 10
-        if color == "red":  # rgb (255,0,0)
-            new_x = x if x < y else x - size
-            new_y = y - size if y >= size else 0
-        elif color == "green":  # rgb (0,255,0)
-            new_x = x
-            new_y = y - size if y >= size else 0
-
-        crop_img = image.crop((new_x - size_x, new_y, new_x + size - size_x, new_y + size + 10))
-
-        # plt.imshow(crop_img)
-        cropped_images.append(crop_img)
-
-    print(len(cropped_images))
-    for image in cropped_images:
-        plt.imshow(image)
-        plt.show()
+# def crop_image(image_path: str, listpoint: list, color: str):
+#     cropped_images = []
+#     polygons_cropped = []
+#     for i, point in enumerate(listpoint):
+#         # if i == 10:
+#         #     break
+#         x = point[0]
+#         y = point[1]
+#         image = Image.open(image_path)
+#         size = 30
+#         size_x = 10
+#         if color == "red":  # rgb (255,0,0)
+#             new_x = x if x < y else x - size
+#             new_y = y - size if y >= size else 0
+#         elif color == "green":  # rgb (0,255,0)
+#             new_x = x
+#             new_y = y - size if y >= size else 0
+#
+#         crop_img = image.crop((new_x - size_x, new_y, new_x + size - size_x, new_y + size + 10))
+#
+#         # plt.imshow(crop_img)
+#         cropped_images.append(crop_img)
+#
+#     print(len(cropped_images))
+#     for image in cropped_images:
+#         plt.imshow(image)
+#         plt.show()
 
 
 def plot_grouped_lists(grouped_lists):
@@ -301,18 +356,6 @@ def plot_grouped_lists(grouped_lists):
         first_point = group[0]
         print(first_point)
         plt.plot(first_point, 'bo', markersize=4)
-
-
-def save_to_csv(data: List[Dict[str, Union[str, int, float]]], filename: str):
-    # Get a list of all keys in the dictionaries
-    fieldnames = set().union(*[row.keys() for row in data])
-
-    with open(filename, 'w', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-
-        for row in data:
-            writer.writerow(row)
 
 
 def main(argv=None):
